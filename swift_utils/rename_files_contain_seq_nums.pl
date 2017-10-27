@@ -6,6 +6,9 @@ use Carp;
 use Getopt::Std;
 use File::Copy qw(move copy);
 
+# rename a set of files by removeing the sequence number and move to a target dir
+# any duplicates created moved to seperate dups dir with original names 
+
 my %opts;
 getopts('t:s:m', \%opts);
 my $sourcedir = $opts{'s'} if defined $opts{'s'};

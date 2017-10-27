@@ -72,7 +72,8 @@ Display usage and help.
 
 =head1 DESCRIPTION
 
-Program to extract payloads from EB swift adaptors payload.log file. Writes files as <messagetype>_<id>.<suffix>
+Program to extract payloads from payload file wrriten from spring integration adaptor. 
+Writes files as <messagetype>_<id>.<suffix>
 
 =cut
 
@@ -116,7 +117,7 @@ while ($line = <$fh>) {
 	chomp $line;
 	if ($state eq "SCANNING") {
 		if ($line =~ /$extract_types{$extract_type}/) {
-			# Ignore cam payment image messages
+			# Ignore payment image messages
 			next if $line =~ /MessageType="MeridianPaymentImage"/;
 			# Ignore if not the required interface 
 			next if defined $extract_interface && $line !~ /\[ ${extract_interface}-/;
