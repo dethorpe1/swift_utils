@@ -134,7 +134,7 @@ while ($line = <$fh>) {
 				$payload = $1;
 			}
 			else {
-				# this is payload formt in translated messages
+				# this is payload format in translated messages
 				$line =~ /, Payload:(.*)$/;
 				$payload = $1;
 			} 
