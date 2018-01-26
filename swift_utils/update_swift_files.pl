@@ -52,6 +52,10 @@ Directory to write updated files to
 
 Filename pattern to match in source dir. Optional, default is all files in curent dir
 
+=item B<-r>
+
+Number to start reference count from for genrefnum option. Can also be set in xml config, command line overrides config.
+
 =item B<-d>
 
 Enable debug output
@@ -69,6 +73,7 @@ Display usage and help.
 ###############
 our $config;
 our $debug = 0;
+our $ref_count=0;
 
 # Dispatch table of change types to subroutines
 my %change_dispatch = (
@@ -99,7 +104,20 @@ Params:
 sub update_file {
 	my ($file,$out_dir) = @_;
 	open( my $fh, '<', $file ) || croak "Unable to open source file $file: $!";
-	my $output_file = "${out_dir}/" . basename ($file);
+	my $output_file_name = basename ($file);
+	# Rename output file if configured
+	if (exists $config->{file}{filerename_search} && exists $config->{file}{filerename_replace}) {
+		if ($config->{file}{filerename_replace} eq "##ref_count##" ) {
+			my $ref = gen_ref();
+			$output_file_name =~ s/$config->{file}{filerename_search}/$ref/;
+		}
+		else {
+			$output_file_name =~ s/$config->{file}{filerename_search}/$config->{file}{filerename_replace}/;
+		}
+		dbg_print ("Renamed file to $output_file_name");
+	}
+	
+	my $output_file = "${out_dir}/" . $output_file_name;
 	open (my $output_fh, '>', $output_file) || croak "Unable to open output file '$output_file': $!";
 	# Set bin mode on in and out filehandles as need to maintain SWIFT CRLF endings
 	# regardless of platform running on. If this isn't done then end of lines are converted
@@ -119,13 +137,28 @@ sub update_file {
 			print $output_fh update_header($line,$msg_type);
 		}
 		# If trailer line
-		elsif ($line =~ /-\}/) {
+		elsif ($line =~ /^-\}/) {
 			# Process the final field we have just completed capturing
 			print " --> Processing final field before trailer: $current_field\n";
 			print $output_fh update_field($msg_type, $current_field,\@field);
+			# Strip block5 if configured
+			if ($line =~ /\{5:/) {
+				if (exists($config->{body}{stripblock5})) {
+					dbg_print ("Stripping block5 from trailer line");
+					$line =~ s/\{5:.*}//;
+				}
+			}
 			print $output_fh $line;
 			@field = ();
-			last;
+			#last;
+		}
+		elsif ($line =~ /^\{5:/) {
+			# Strip block5 if configured
+			if (exists($config->{body}{stripblock5})) {
+				dbg_print ("Stripping seperate block5");
+				$line =~ s/\{5:.*}//;
+			}
+			print $output_fh $line;
 		}
 		else {
 			# body line
@@ -133,6 +166,26 @@ sub update_file {
 			if ($line =~ /^:([0-9]+[A-Z]*):/) {
 				# Its a start field tag
 				if ( @field > 0 ) {
+					# Do transaction ref processing for field 20 & 20C
+					if ($current_field eq "20" || $current_field eq "20C") {
+						if (exists($config->{body}{setreftofilename})) {
+							# set the ref to the filename without extensions (which gives the test id) 
+							# and _ replaced with .
+							(my $filename = fileparse($output_file_name, qr/\..*/)) =~ s/_/./g;
+							# Add the suffix if specified
+							$filename .= $config->{body}{refsuffix} if (exists($config->{body}{refsuffix}));
+							$field[0] = build_ref_field($filename,$current_field,$field[0]);	 
+							dbg_print ("Changed ref to $field[0]");
+						}
+						elsif (exists($config->{body}{genrefnum})) {
+							# create new reference
+				    		my $ref = gen_ref();
+				    		$ref_count++;	
+				    		# Update the field with new reference
+				    		$field[0] = build_ref_field($ref,$current_field,$field[0]);			
+							dbg_print ("Changed ref to $field[0]");
+						}
+					}
 					# Process the field we have just completed capturing, if there is one
 					print " --> Processing field: $current_field\n";
 					print $output_fh update_field($msg_type, $current_field,\@field);
@@ -176,6 +229,7 @@ Params:
 sub update_header {
 	my ($line,$msg_type) = @_;
 	if (exists $config->{header}) {
+		# Update block1 bic if configured
 		if (exists $config->{header}{block1}{bic} ) {
 			my $bic = extract_field("{1",BLOCK1_BIC_START,12,$line );
 			# check override
@@ -187,6 +241,7 @@ sub update_header {
 				dbg_print ("NOT Replacing block1 bic '$bic' due to override: " . $config->{header}{block1}{overrides}{$msg_type}{criteria});
 			}
 		}
+		# Update block2 bic if configured
 		if (exists $config->{header}{block2}{bic} ) {
 			my $bic;
 			my $bic_start;
@@ -205,6 +260,16 @@ sub update_header {
 			}
 			else {
 				dbg_print ("NOT Replacing block2 bic '$bic' due to override: " . $config->{header}{block2}{overrides}{$msg_type}{criteria});
+			}
+		}
+		# Convert OUTPUT msg to INPUT if configured
+		if (exists $config->{header}{block2}{changetoinput} ) {
+			my $bic_start;
+			if (extract_field("{2:",BLOCK2_MODE_START,1,$line) eq "O") {
+				my $bic = extract_field("{2:",BLOCK2_OUTPUT_BLOCK_BIC_START,12,$line );
+				my $block2 = "{2:I${msg_type}${bic}N}";
+				dbg_print ("Changeing block2 to INPUT style: ${block2}" );
+				$line =~ s/\{2:.*?\}/${block2}/;
 			}
 		}
 	}
@@ -231,7 +296,7 @@ Params:
 =cut
 
 sub update_field {
-	my ($msg_type, $field_name,$field_arrayref) = @_;
+	my ($msg_type,$field_name,$field_arrayref) = @_;
 	my $updated_field = "";
 	
 	if (exists $config->{body}{fields}{$field_name} ) {
@@ -295,7 +360,7 @@ sub replace_substring {
 	# add back remaining line, if any left.
 	$out_line .= substr ($line, $start + length($replacement)) if ($start + length($replacement) < length($line));
 
-	# truncate to original length if its now longer and add back eol chars before returning
+	# truncate to original length if its now longer
 	return substr($out_line,0,length($line)	);
 }
 		
@@ -508,12 +573,34 @@ sub dbg_print {
 	print " DEBUG: $_[0]\n" if $debug;
 }
 
+sub gen_ref {
+	my $ref = "";				
+	$ref .= $config->{body}{refpreffix} if exists $config->{body}{refpreffix};
+	$ref .= $ref_count;
+	$ref .= $config->{body}{refsuffix} if exists $config->{body}{refsuffix};
+	return $ref;
+}
+
+sub build_ref_field {
+	my ($ref,$current_field,$orig_field) = @_;
+	# Take of the eol before processing, then add it back
+	$orig_field =~ s/\x0D\x0A$//;
+	if ($current_field eq "20") {
+		$orig_field = ":20:$ref";
+	}
+	else {
+		$orig_field =~ s/^(:20C.*?\/\/).*$/$1$ref/;
+	}
+	$orig_field .= SWIFT_EOL;
+	return 	$orig_field;	
+}
+
 ############
 ### MAIN ###
 ############
 
 my %opts;
-getopts( 'hs:t:p:c:d', \%opts );
+getopts( 'hs:t:p:c:dr:', \%opts );
 pod2usage( -verbose => 2, -exitval => 0 ) if defined( $opts{'h'} );
 pod2usage( -verbose => 1, -exitval => 1, -message => "\nERROR: mandatory parameter missing.\n" ) if !defined $opts{'s'} || !defined $opts{'t'} || !defined $opts{'c'};
 
@@ -527,6 +614,9 @@ $opt_file_pattern = $opts{'p'} if defined $opts{'p'};
 $config = XMLin($config_file, ForceArray => ['field','change','override'], KeyAttr => ['id','type'],GroupTags => { fields => 'field',changes => 'change',overrides => 'override' });
 dbg_print ("Config = \n" . Dumper ($config));
 
+# Set the start reference numnber if configured in XML or config
+$ref_count = $config->{body}{refstart} if (exists($config->{body}{refstart})); 
+$ref_count = $opts{'r'} if defined $opts{'r'};
 for (glob ("$source_dir/$opt_file_pattern")) {
 	print "## Updating file: $_\n";
 	update_file($_,$out_dir);

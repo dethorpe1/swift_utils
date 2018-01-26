@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<swiftreplace xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="update_swift_files.xsd">
+	<file/>
+	<header>
+		<block2 changetoinput="true"/>
+	</header>
+	<body>
+</body>
+</swiftreplace>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<swiftreplace xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="update_swift_files.xsd">
+	<!-- file filerename_search="ref" filerename_replace="##ref_count##"/-->
+	<header/>
+	<!--  body genrefnum="true" refpreffix="COMPASS." refsuffix="A" refstart="99"/-->
+	<body setreftofilename="true" refsuffix="/99"/>
+</swiftreplace>
